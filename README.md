@@ -1,12 +1,49 @@
+<p align="center"><img src="docs/images/banner.svg" alt="secretsquirrel" width="720"></p>
+
 # secretsquirrel (agent-vault)
 
 Lets Claude Code and Cursor agents use passwords and API keys **without seeing them**.
 The agent names environment variables (`GITHUB_TOKEN`); you approve the exact command in a native popup; the value comes from your existing password store and is injected into that one process. Nothing is stored by agent-vault itself.
 
+## Install in one line
+
+Paste this into Claude Code or Cursor:
+
+```text
+Set up secretsquirrel so you never need my passwords in chat: ask me which password store and which agents (Claude Code, Cursor) I want, then run `npx -y secretsquirrel init --store <store> --agents <list> --yes`, and tell me to restart you.
 ```
-npx secretsquirrel init      # pick a store and the agents to wire up, then self-test
-npx secretsquirrel uninstall # restores every config file byte-for-byte
+
+Or run it yourself (interactive: it shows each store with how many entries it already holds, and asks which agents to wire up):
+
+```bash
+npx secretsquirrel init
+npx secretsquirrel uninstall   # restores every config file it touched
 ```
+
+## What it looks like
+
+When an agent wants to use a secret, it names an env var. You see the whole command first:
+
+<p align="center"><img src="docs/images/dialog-approve.png" alt="Approval dialog showing the command, directory, time limit and the secret names" width="420"></p>
+
+If the secret isn't stored yet, you pick or name it (the agent's suggestion comes pre-filled, plus your existing keys), then type the value into a hidden field. The agent never sees it:
+
+<p align="center">
+  <img src="docs/images/dialog-pick.png" alt="Key picker with the agent's suggestion pre-selected and existing keys listed" width="340">
+  &nbsp;
+  <img src="docs/images/dialog-value.png" alt="Hidden value entry saved to the chosen store" width="400">
+</p>
+
+If a run looks like a failed login, the agent can ask to replace the secret, but only you decide. A local page shows what failed and stays locked until you type a 6-digit code that appears in a separate native dialog:
+
+<p align="center"><img src="docs/images/update-locked.png" alt="Update page locked behind a 6-digit code; no secret is on the page" width="520"></p>
+
+Then you compare old and new values side by side (hidden until you reveal them). The agent only learns "updated", "declined" or "cancelled":
+
+<p align="center"><img src="docs/images/update-compare.png" alt="Old and new value side by side with Reveal buttons and Update, Keep old, Cancel" width="520"></p>
+
+_Screenshots use dummy values._
+
 
 macOS only for now (native dialogs use `osascript`). Node 20+.
 
