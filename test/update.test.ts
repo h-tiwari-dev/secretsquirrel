@@ -33,6 +33,7 @@ class FakePrompter implements Prompter {
   async pickKey(_e: string[], s?: string, hint?: string) { this.hints.push(hint); return s; }
   async askValue() { return undefined; }
   async approveRun(d: RunApproval) { this.approvals.push(d); return this.approve; }
+  async approveUse() { return "deny" as const; }
   async reviewUpdate(req: UpdateRequest) { this.seen.push(req); return this.decision; }
 }
 

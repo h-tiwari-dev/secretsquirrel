@@ -1,3 +1,5 @@
+import { scanQuotes } from "../policy/allowlist.js";
+
 export interface Verdict {
   deny: boolean;
   reason?: string;
@@ -50,7 +52,8 @@ export function evaluateCommand(command: string): Verdict {
     }
   }
 
-  for (const seg of segments(command)) {
+  // Single-quoted text is not run by this shell (a git credential helper's `echo password=$TOKEN` goes to git, not to the agent).
+  for (const seg of segments(scanQuotes(command)?.plain ?? command)) {
     const words = seg.split(/\s+/);
     const head = words[0].replace(/^[("'`]+/, "");
 

@@ -38,6 +38,16 @@ const CONFIRM = `on run argv
   return button returned of r
 end run`;
 
+const USE = `on run argv
+  set theButtons to {}
+  repeat with i from 3 to count of argv
+    set end of theButtons to item i of argv
+  end repeat
+  set r to display dialog (item 2 of argv) with title (item 1 of argv) buttons theButtons default button 1 cancel button 1 with icon caution giving up after 110
+  if gave up of r then return "Deny"
+  return button returned of r
+end run`;
+
 const PIN_DIALOG = `on run argv
   display dialog ("Code: " & item 1 of argv & return & return & "Type it into the agent-vault page in your browser to compare the old and new values for " & item 2 of argv & ". Do not share it with anyone.") with title "agent-vault: unlock" buttons {"OK"} default button "OK" giving up after 600
 end run`;
@@ -51,6 +61,17 @@ export interface RunApproval {
   unreferenced: string[];
 }
 
+export interface UseApproval {
+  names: string[];
+  /** Names that are not stored yet: the user will be asked for the value right after. */
+  missing: string[];
+  command: string;
+  storeLabel: string;
+  /** Programs "Always allow" would grant. Undefined when the command is too complex to grant by program name. */
+  programs?: string[];
+}
+export type UseChoice = "deny" | "once" | "always";
+
 export const NEW_ENTRY = "＋ New secret…";
 
 export interface Prompter {
@@ -60,6 +81,8 @@ export interface Prompter {
   askValue(name: string, backendLabel: string, context?: string): Promise<string | undefined>;
   /** Approve injecting secrets into a specific command. */
   approveRun(d: RunApproval): Promise<boolean>;
+  /** Hook flow: one-time decision about a program using a secret. "always" remembers (name, program). */
+  approveUse(d: UseApproval): Promise<UseChoice>;
   /** Side-by-side old/new review. Plaintext stays between this process and the human. */
   reviewUpdate(req: UpdateRequest): Promise<UpdateDecision>;
 }
@@ -105,6 +128,26 @@ export class OsascriptPrompter implements Prompter {
     }
     lines.push("", "Allowing means this command may do anything with these secrets, including sending them over the network.");
     return (await osa(CONFIRM, ["agent-vault: approve", lines.join("\n")])) === "Allow";
+  }
+
+  async approveUse(d: UseApproval): Promise<UseChoice> {
+    const lines = [
+      `An agent's command wants to use ${d.names.join(", ")} (from ${d.storeLabel}):`,
+      "",
+      visible(d.command),
+    ];
+    if (d.missing.length) lines.push("", `${d.missing.join(", ")} is not stored yet. You will be asked for the value next.`);
+    const odd = nonAscii(d.command);
+    if (odd.length) lines.push("", `WARNING: contains non-ASCII characters (${odd.slice(0, 8).join(", ")}). Look-alike letters can disguise a hostname.`);
+    lines.push("", "The agent never sees the value. The command may still send it anywhere, so only allow what you recognise.");
+    if (d.programs) {
+      lines.push("", `Always allow: ${d.programs.join(", ")} may use ${d.names.join(", ")} from now on without asking. Any other program asks again.`);
+    } else {
+      lines.push("", "This command is too complex to remember (substitutions, redirects or functions), so it can only be allowed once.");
+    }
+    const buttons = d.programs ? ["Deny", "Allow once", "Always allow"] : ["Deny", "Allow once"];
+    const r = await osa(USE, ["agent-vault: secret use", lines.join("\n"), ...buttons]);
+    return r === "Always allow" ? "always" : r === "Allow once" ? "once" : "deny";
   }
 
   async reviewUpdate(req: UpdateRequest): Promise<UpdateDecision> {

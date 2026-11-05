@@ -80,7 +80,7 @@ async function mergeClaudeHook(ctx: InstallCtx): Promise<string> {
   const groups: any[] = (cfg.hooks?.PreToolUse ?? [])
     .map((g: any) => ({ ...g, hooks: (g.hooks ?? []).filter((h: any) => !isOurHook(h.command, "claude")) }))
     .filter((g: any) => g.hooks.length > 0);
-  const handler: Record<string, unknown> = { type: "command", command: hookCommand(ctx, "claude"), timeout: 10 };
+  const handler: Record<string, unknown> = { type: "command", command: hookCommand(ctx, "claude"), timeout: 130 };
   if (ctx.claudeOnFailureBlock) handler.onFailure = "block";
   groups.push({ matcher: "Bash", hooks: [handler] });
   cfg.hooks = { ...(cfg.hooks ?? {}), PreToolUse: groups };

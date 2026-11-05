@@ -8,7 +8,7 @@ const text = (obj: unknown) => ({ content: [{ type: "text" as const, text: JSON.
 
 export async function startMcp(): Promise<void> {
   const cfg = await (await import("../policy/config.js")).loadConfig();
-  const vault = new Vault(await defaultBackend(), undefined, undefined, { allow: cfg.allow, approvalTtlMs: (cfg.approvalTtlMinutes ?? 10) * 60_000 });
+  const vault = new Vault(await defaultBackend(), undefined, undefined, { allow: cfg.allow, approvalTtlMs: (cfg.approvalTtlMinutes ?? 10) * 60_000, shareState: true });
   const server = new McpServer({ name: "agent-vault", version: "0.1.0" });
 
   server.registerTool(

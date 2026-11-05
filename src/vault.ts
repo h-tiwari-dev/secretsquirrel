@@ -4,6 +4,7 @@ import { realpathSync } from "node:fs";
 import { audit } from "./policy/audit.js";
 import { checkAllowlist, type AllowRules } from "./policy/allowlist.js";
 import { agentText, codePoints, visible, clip } from "./policy/sanitize.js";
+import { addName, clearFailures, readFailures, recordFailures, writeNames } from "./policy/state.js";
 import { OsascriptPrompter, type Prompter } from "./prompt/osascript.js";
 import { runWithSecrets, type RunOutcome } from "./runner/spawn.js";
 
@@ -45,10 +46,12 @@ export class Vault {
     private backend: Backend,
     private prompter: Prompter = new OsascriptPrompter(),
     private now: () => number = Date.now,
-    private policy: { allow?: AllowRules; approvalTtlMs?: number } = {},
+    private policy: { allow?: AllowRules; approvalTtlMs?: number; shareState?: boolean } = {},
   ) {}
 
   /** Exact (names, cwd, command) approvals remembered briefly so a re-run after update_secret does not re-prompt. */
+  /** True for the MCP server and `exec`: they share names/failures through files because they are separate processes. */
+  private get shareState(): boolean { return this.policy.shareState === true; }
   private approved = new Map<string, { until: number; names: string[] }>();
   private approvalKey(names: string[], command: string, cwd: string | undefined, timeoutSec: number): string {
     let dir = cwd ?? process.cwd();
@@ -61,6 +64,7 @@ export class Vault {
 
   async listNames(): Promise<{ backend: string; names: string[] }> {
     const names = (await this.backend.list()).filter((n) => !n.endsWith(PREV));
+    if (this.shareState) await writeNames(names);
     return { backend: this.backend.label, names };
   }
 
@@ -82,6 +86,7 @@ export class Vault {
     if (!value) return false;
     assertValidValue(value);
     await this.backend.set(name, value);
+    if (this.shareState) await addName(name);
     await audit({ event: "store", name, status: "stored" });
     return true;
   }
@@ -157,14 +162,40 @@ export class Vault {
     // Fixed expiry, set only by a fresh human approval, and only once every secret resolved.
     const ttl = this.policy.approvalTtlMs ?? 10 * 60_000;
     if (!cached && ttl > 0) this.approved.set(akey, { until: this.now() + ttl, names: unique });
-    const r: RunOutcome = await runWithSecrets(command, secrets, opts);
+    return this.afterRun(unique, command, await runWithSecrets(command, secrets, opts));
+  }
+
+  /**
+   * Hook path: the human already allowed these names for this command (grant or one-off), so no approval popup here.
+   * Missing values are still asked for privately. Runs in the agent's own environment plus the secrets.
+   */
+  async execInjected(command: string, names: string[], opts: { cwd?: string; timeoutMs?: number } = {}): Promise<RunResult> {
+    for (const n of names) {
+      assertValidName(n);
+      if (n.endsWith(PREV)) throw new Error(`"${n}" is reserved.`);
+    }
+    const unique = [...new Set(names)];
+    const secrets: Record<string, string> = {};
+    for (const n of unique) {
+      if (!(await this.ensure(n, `An agent's command needs it: ${clip(visible(command), 160)}`))) {
+        await audit({ event: "run", names: unique, status: "cancelled" });
+        return { status: "cancelled", message: `The user did not provide ${n}.` };
+      }
+      secrets[n] = (await this.backend.get(n))!;
+    }
+    return this.afterRun(unique, command, await runWithSecrets(command, secrets, { ...opts, inheritEnv: true }));
+  }
+
+  private async afterRun(unique: string[], command: string, r: RunOutcome): Promise<RunResult> {
     if (r.timedOut) {
       await audit({ event: "run", names: unique, status: "timeout" });
       return { status: "timeout", exitCode: r.exitCode, output: r.output };
     }
     if (r.authFailureSuspected) {
       // Remember what actually ran, so update_secret can show the human facts rather than agent claims.
-      for (const n of unique) this.suspected.set(n, { at: this.now(), command: clip(visible(command), 300), exitCode: r.exitCode, snippet: clip(visible(r.output), 400) });
+      const rec = { at: this.now(), command: clip(visible(command), 300), exitCode: r.exitCode, snippet: clip(visible(r.output), 400) };
+      for (const n of unique) this.suspected.set(n, rec);
+      if (this.shareState) await recordFailures(unique, rec);
       await audit({ event: "run", names: unique, status: "auth_failed_suspected" });
       return {
         status: "auth_failed_suspected",
@@ -176,6 +207,7 @@ export class Vault {
     }
     // A later run that is not an auth failure means the earlier suspicion is stale.
     for (const n of unique) this.suspected.delete(n);
+    if (this.shareState) await clearFailures(unique);
     await audit({ event: "run", names: unique, status: r.withheld ? "withheld" : r.exitCode === 0 ? "ok" : "failed" });
     return { status: r.exitCode === 0 ? "ok" : "failed", exitCode: r.exitCode, output: r.output };
   }
@@ -188,7 +220,7 @@ export class Vault {
   async updateSecret(name: string, ctx: { reason?: string } = {}): Promise<UpdateResult> {
     assertValidName(name);
     if (name.endsWith(PREV)) throw new Error(`"${name}" is reserved.`);
-    const failure = this.suspected.get(name);
+    const failure = this.suspected.get(name) ?? (this.shareState ? (await readFailures())[name] : undefined);
     if (failure && this.now() - failure.at > SUSPECTED_TTL_MS) this.suspected.delete(name);
     if (!failure || this.now() - failure.at > SUSPECTED_TTL_MS) {
       return {
@@ -236,6 +268,7 @@ export class Vault {
     // One-slot backup, backend-agnostic. Written first so a failed main write cannot lose the old value.
     await this.backend.set(name + PREV, old);
     await this.backend.set(name, d.newValue);
+    if (this.shareState) await clearFailures([name]);
     await audit({ event: "update", name, status: "updated" });
     return { status: "updated", message: `${name} was updated by the user. You may re-run the failed command once with run_with_secrets.` };
   }

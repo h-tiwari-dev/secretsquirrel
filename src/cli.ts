@@ -40,12 +40,35 @@ program
   .option("--home <dir>", "home directory (testing)")
   .action(async (o) => (await import("./init.js")).runUninstall(o));
 
+program
+  .command("exec", { hidden: true })
+  .description("Run a command with secrets injected (used by the Claude Code hook)")
+  .requiredOption("--names <csv>")
+  .requiredOption("--cmd-b64 <b64>")
+  .action(async (o) => (await import("./exec.js")).execInjected(String(o.names).split(",").filter(Boolean), o.cmdB64));
+
+program
+  .command("grants")
+  .description("Show which programs may use which secrets without asking; `--revoke [NAME]` removes them")
+  .option("--revoke [name]", "revoke one secret's grants, or all if no name is given")
+  .action(async (o) => {
+    const st = await import("./policy/state.js");
+    if (o.revoke !== undefined) {
+      await st.revokeGrants(typeof o.revoke === "string" ? o.revoke : undefined);
+      console.log("Revoked.");
+      return;
+    }
+    const g = await st.loadGrants();
+    const rows = Object.entries(g);
+    console.log(rows.length ? rows.map(([n, p]) => `${n}: ${p.join(", ")}`).join("\n") : "(no grants yet)");
+  });
+
 program.command("mcp").description("Run the MCP server on stdio").action(async () => {
   await startMcp();
 });
 
 program.command("list").description("List stored secret names").action(async () => {
-  const { backend, names } = await new Vault(await defaultBackend()).listNames();
+  const { backend, names } = await new Vault(await defaultBackend(), undefined, undefined, { shareState: true }).listNames();
   console.log(`${backend}:\n${names.map((n) => "  " + n).join("\n") || "  (none)"}`);
 });
 

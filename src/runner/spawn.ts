@@ -38,10 +38,12 @@ function killGroup(pid: number | undefined): void {
 export function runWithSecrets(
   command: string,
   secrets: Record<string, string>,
-  opts: { cwd?: string; timeoutMs?: number } = {},
+  opts: { cwd?: string; timeoutMs?: number; inheritEnv?: boolean } = {},
 ): Promise<RunOutcome> {
   const env: Record<string, string> = {};
-  for (const k of BASE_ENV_KEYS) if (process.env[k] !== undefined) env[k] = process.env[k]!;
+  // inheritEnv: the hook-injected command should behave exactly as the agent's own shell would (its PATH, region, etc.).
+  if (opts.inheritEnv) for (const [k, v] of Object.entries(process.env)) { if (v !== undefined) env[k] = v; }
+  else for (const k of BASE_ENV_KEYS) if (process.env[k] !== undefined) env[k] = process.env[k]!;
   Object.assign(env, secrets);
   const values = Object.values(secrets);
 
